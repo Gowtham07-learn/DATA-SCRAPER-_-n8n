@@ -1,4 +1,3 @@
-https://github.com/Gowtham07-learn/DATA-SCRAPER-_-n8n.git
 Data Scraper using n8n
 Description
 
