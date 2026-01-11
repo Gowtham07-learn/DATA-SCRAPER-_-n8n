@@ -1,0 +1,277 @@
+{
+  "name": "data scraper",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "73cc674e-7594-4875-a700-1fc69db3dfba",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://techcrunch.com/category/artificial-intelligence/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "84fc6164-7f6a-4008-b945-1beb8c436b1a",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the HTML content from the first item\nconst html = $input.first().json.data;\n\n// Check if we have HTML content\nif (!html || typeof html !== 'string') {\n  console.error('No valid HTML content found');\n  return [{\n    json: {\n      error: 'No HTML content found in $input.first().json.data'\n    }\n  }];\n}\n\nconsole.log('Starting article extraction...');\nconsole.log('HTML length:', html.length);\n\n// Helper function to extract attribute value\nfunction extractAttr(str, attrName) {\n  const regex = new RegExp(attrName + '\\\\s*=\\\\s*\"([^\"]*)\"');\n  const match = str.match(regex);\n  return match ? match[1] : null;\n}\n\n// Helper function to strip HTML tags\nfunction stripHtml(str) {\n  if (!str) return '';\n  return str.replace(/<[^>]*>/g, '').trim();\n}\n\n// Helper function to decode HTML entities\nfunction decodeHtml(str) {\n  if (!str) return '';\n  return str\n    .replace(/&#8217;/g, \"'\")\n    .replace(/&#039;/g, \"'\")\n    .replace(/&#8211;/g, \"–\")\n    .replace(/&#8212;/g, \"—\")\n    .replace(/&amp;/g, \"&\")\n    .replace(/&lt;/g, \"<\")\n    .replace(/&gt;/g, \">\")\n    .replace(/&quot;/g, '\"');\n}\n\n// Split HTML into article blocks\nconst articleBlocks = [];\nlet searchFrom = 0;\n\nconsole.log('Searching for article blocks...');\n\nwhile (true) {\n  const startTag = '<li class=\"wp-block-post post-';\n  const startIdx = html.indexOf(startTag, searchFrom);\n  \n  if (startIdx === -1) {\n    break;\n  }\n  \n  // Find the closing </li> tag\n  let depth = 1;\n  let pos = startIdx + startTag.length;\n  \n  while (depth > 0 && pos < html.length) {\n    const nextOpen = html.indexOf('<li', pos);\n    const nextClose = html.indexOf('</li>', pos);\n    \n    if (nextClose === -1) break;\n    \n    if (nextOpen !== -1 && nextOpen < nextClose) {\n      depth++;\n      pos = nextOpen + 3;\n    } else {\n      depth--;\n      pos = nextClose + 5;\n    }\n  }\n  \n  if (depth === 0) {\n    articleBlocks.push(html.substring(startIdx, pos));\n    searchFrom = pos;\n  } else {\n    break;\n  }\n}\n\nconsole.log('Found article blocks:', articleBlocks.length);\n\n// Debug: Show first article block structure\nif (articleBlocks.length > 0) {\n  console.log('First article block preview (500 chars):', articleBlocks[0].substring(0, 500));\n}\n\n// Extract articles\nconst articles = [];\n\nfor (let i = 0; i < articleBlocks.length; i++) {\n  const articleHtml = articleBlocks[i];\n  \n  try {\n    // Debug first article in detail\n    if (i === 0) {\n      console.log('--- Debugging first article ---');\n      console.log('Looking for title link...');\n    }\n    \n    // Extract post ID\n    const postIdMatch = articleHtml.match(/post-(\\d+)/);\n    const postId = postIdMatch ? postIdMatch[1] : null;\n    \n    if (i === 0) console.log('Post ID:', postId);\n    \n    // Extract title and URL - try multiple patterns\n    let title = null;\n    let url = null;\n    \n    // Pattern 1: loop-card__title-link\n    let titleLinkMatch = articleHtml.match(/<a[^>]*class=\"[^\"]*loop-card__title-link[^\"]*\"[^>]*href=\"([^\"]*)\"[^>]*>([\\s\\S]*?)<\\/a>/);\n    \n    if (!titleLinkMatch) {\n      // Pattern 2: Any link with title\n      titleLinkMatch = articleHtml.match(/<a[^>]*href=\"([^\"]*)\"[^>]*>([\\s\\S]*?)<\\/a>/);\n    }\n    \n    if (titleLinkMatch) {\n      url = titleLinkMatch[1];\n      title = decodeHtml(stripHtml(titleLinkMatch[2]));\n      \n      if (i === 0) {\n        console.log('Found title:', title);\n        console.log('Found URL:', url);\n      }\n    } else {\n      if (i === 0) console.log('No title/URL match found');\n    }\n    \n    // Extract image\n    const imgMatch = articleHtml.match(/<img[^>]*>/);\n    let imageUrl = null;\n    let imageAlt = null;\n    if (imgMatch) {\n      imageUrl = extractAttr(imgMatch[0], 'src');\n      imageAlt = extractAttr(imgMatch[0], 'alt');\n      if (i === 0) console.log('Found image:', imageUrl);\n    }\n    \n    // Extract category\n    const categoryMatch = articleHtml.match(/<a[^>]*class=\"[^\"]*loop-card__cat[^\"]*\"[^>]*>(.*?)<\\/a>/);\n    let categoryName = null;\n    let categoryUrl = null;\n    if (categoryMatch) {\n      categoryName = decodeHtml(stripHtml(categoryMatch[1]));\n      categoryUrl = extractAttr(categoryMatch[0], 'href');\n      if (i === 0) console.log('Found category:', categoryName);\n    }\n    \n    // Extract authors\n    const authors = [];\n    const authorRegex = /<a[^>]*class=\"[^\"]*loop-card__author[^\"]*\"[^>]*href=\"([^\"]*)\"[^>]*>(.*?)<\\/a>/g;\n    let authorMatch;\n    while ((authorMatch = authorRegex.exec(articleHtml)) !== null) {\n      authors.push({\n        name: decodeHtml(stripHtml(authorMatch[2])),\n        url: authorMatch[1]\n      });\n    }\n    if (i === 0) console.log('Found authors:', authors.length);\n    \n    // Extract published time\n    const timeMatch = articleHtml.match(/<time[^>]*datetime=\"([^\"]*)\"[^>]*>([\\s\\S]*?)<\\/time>/);\n    let publishedTime = null;\n    let relativeTime = null;\n    if (timeMatch) {\n      publishedTime = timeMatch[1];\n      relativeTime = stripHtml(timeMatch[2]);\n      if (i === 0) console.log('Found time:', publishedTime);\n    }\n    \n    // Determine post type\n    let postType = 'article';\n    if (articleHtml.includes('tc_podcast')) {\n      postType = 'podcast';\n    } else if (articleHtml.includes('tc_video')) {\n      postType = 'video';\n    } else if (articleHtml.includes('tc_storyline')) {\n      postType = 'storyline';\n    } else if (articleHtml.includes('loop-card--brief')) {\n      postType = 'brief';\n    }\n    \n    // Extract duration\n    const durationMatch = articleHtml.match(/<span[^>]*class=\"[^\"]*loop-card__duration[^\"]*\"[^>]*>(.*?)<\\/span>/);\n    const duration = durationMatch ? stripHtml(durationMatch[1]) : null;\n    \n    // Extract episodes\n    const episodesMatch = articleHtml.match(/<span[^>]*class=\"[^\"]*loop-card__episodes[^\"]*\"[^>]*>[\\s\\S]*?(\\d+\\s+Stories)[\\s\\S]*?<\\/span>/);\n    const episodes = episodesMatch ? episodesMatch[1] : null;\n    \n    // Only add if we have title and URL\n    if (title && url) {\n      const article = {\n        id: postId || '',\n        title: title || '',\n        url: url || '',\n        imageUrl: imageUrl || '',\n        imageAlt: imageAlt || '',\n        category: categoryName || '',\n        categoryUrl: categoryUrl || '',\n        authors: authors.map(function(a) { return a.name; }).join(', ') || '',\n        authorUrls: authors.map(function(a) { return a.url; }).join(', ') || '',\n        publishedDatetime: publishedTime || '',\n        publishedRelative: relativeTime || '',\n        postType: postType || '',\n        duration: duration || '',\n        episodes: episodes || ''\n      };\n      \n      articles.push(article);\n      if (i === 0 || i % 10 === 0) {\n        console.log('Extracted article ' + (i + 1) + ':', article.title);\n      }\n    } else {\n      if (i === 0) {\n        console.log('Article skipped - title:', title, 'url:', url);\n      }\n    }\n  } catch (error) {\n    console.error('Error extracting article ' + (i + 1) + ':', error.message);\n  }\n}\n\nconsole.log('Total articles extracted:', articles.length);\n\n// Always return at least one item\nif (articles.length === 0) {\n  return [{\n    json: {\n      message: 'No valid articles extracted',\n      blocksFound: articleBlocks.length,\n      firstBlockPreview: articleBlocks.length > 0 ? articleBlocks[0].substring(0, 1000) : 'No blocks'\n    }\n  }];\n}\n\n// Return all articles as separate items in n8n format\nreturn articles.map(function(article) {\n  return {\n    json: article\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "993ffec1-bbc4-4247-af51-300f9377478a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1mIWG01qPthjBJAYOnuVMmOue-a_F3ol47R3vrxbR3CQ",
+          "mode": "list",
+          "cachedResultName": "DATA SCRAP",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1mIWG01qPthjBJAYOnuVMmOue-a_F3ol47R3vrxbR3CQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1mIWG01qPthjBJAYOnuVMmOue-a_F3ol47R3vrxbR3CQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.id }}",
+            "title": "={{ $json.title }}",
+            "url": "={{ $json.url }}",
+            "imageUrl": "={{ $json.imageUrl }}",
+            "imageAlt": "={{ $json.imageAlt }}",
+            "categoryUrl": "={{ $json.categoryUrl }}",
+            "category": "={{ $json.category }}",
+            "author": "={{ $json.authors }}",
+            "authorUrls": "={{ $json.authorUrls }}",
+            "publishedDatetime": "={{ $json.publishedRelative }}",
+            "duration": "={{ $json.duration }}",
+            "postType": "={{ $json.postType }}",
+            "episodes": "={{ $json.episodes }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "imageUrl",
+              "displayName": "imageUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "imageAlt",
+              "displayName": "imageAlt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "categoryUrl",
+              "displayName": "categoryUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "author",
+              "displayName": "author",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "authorUrls",
+              "displayName": "authorUrls",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "publishedDatetime",
+              "displayName": "publishedDatetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "publishedDatetime",
+              "displayName": "publishedDatetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "postType",
+              "displayName": "postType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration",
+              "displayName": "duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "episodes",
+              "displayName": "episodes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        624,
+        4.703125
+      ],
+      "id": "d2d94777-4a44-4dbf-ae9c-0ad2f0867239",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "0lGvE7ffMGGuOc4t",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "c9e2f288-8f52-4508-8894-0a2637b065f0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4ff6a3ce28873c51c09f81af1e124938ac1eeef28550b95ed578dd2fa606f945"
+  },
+  "id": "KWMYuRpMTiNXe83vJzmwF",
+  "tags": []
+}
